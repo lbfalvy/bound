@@ -1,8 +1,16 @@
 [package]
 name = "bound"
+description = """
+Wrap structs such as lock guards along with the locks they were derived from in a struct you can
+pass around and store anywhere
+"""
+categories = [
+    "asynchronous", "concurrency", "data-structures", "memory-management","rust-patterns"
+]
+repository = "https://github.com/lbfalvy/bound/"
+license = "MIT"
+authors = ["Lawrence Bethlenfalvy <lbfalvy@protonmail.com>"]
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
