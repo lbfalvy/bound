@@ -1,7 +1,7 @@
 [package]
 name = "bound"
 description = """
-Wrap structs such as lock guards along with the locks they were derived from in a struct you can
+Wrap lock guards and other structs along with the locks they were derived from in a struct you can
 pass around and store anywhere
 """
 categories = [
@@ -10,7 +10,7 @@ categories = [
 repository = "https://github.com/lbfalvy/bound/"
 license = "MIT"
 authors = ["Lawrence Bethlenfalvy <lbfalvy@protonmail.com>"]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
