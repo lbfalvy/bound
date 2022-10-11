@@ -1,3 +1,3 @@
 mod bound;
 
-pub use bound::Bound;
+pub use crate::bound::Bound;
