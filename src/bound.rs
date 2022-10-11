@@ -4,15 +4,16 @@ use std::hash::Hash;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
+use std::sync::{Arc, RwLock};
 
 
-/// Derive a T from a U and use it safely. U is placed on the heap, then
-/// a reference to it is used to construct T which is stored inline.
+/// Derive a struct from a reference and use it safely. The source is boxed,
+/// then a reference to it is used to construct the dependent data which is stored inline.
 /// This is not currently possible within Rust's type system so we need to use unsafe code.
 /// 
 /// # Usage
 /// 
-/// In abstract terms, the struct binds a lifetime like so:
+/// In abstract terms, the struct binds a lifetime and a dependent like so:
 /// 
 /// ```
 /// use bound::Bound;
@@ -23,17 +24,22 @@ use std::ptr;
 /// let bound = Bound::new(data, |d| Derived(d.as_slice()));
 /// // bound keeps alive the data and wraps the struct so that
 /// // you just need to keep this struct in scope
-/// assert_eq!(bound.0, &[1, 2, 3]);
+/// assert_eq!(bound.wrapped().0, &[1, 2, 3]);
 /// ```
 /// 
-/// The canonical example is an `Arc<RwLock<>>`:
+/// However you can only read the dependent this way. Writing the dependent can be unsound
+/// so it's not allowed, but if the dependent is something like a mutex guard you can write
+/// through it. To be precise, [Deref], [DerefMut], [AsRef] and [AsMut] are all forwarded if
+/// the dependent implements them.
+/// 
+/// The canonical example is an [Arc]<[RwLock]>:
 /// 
 /// ```
 /// use std::sync::{Arc, RwLock};
 /// use bound::Bound;
 /// let shared_data = Arc::new(RwLock::new(1));
 /// let mut writer = Bound::try_new(shared_data.clone(), |a| a.write()).expect("Failed to lock");
-/// **writer = 2;
+/// *writer = 2;
 /// ```
 /// 
 /// Normally you wouldn't be able to pass around a `RwLockWriteGuard`, but because this
@@ -90,7 +96,7 @@ impl<'a, G, L: 'a> Bound<G, L> {
             .map_err(|e| Bound{ derived: Some(e), source_ptr })
     }
 
-    /// Drop T and get back U
+    /// Drop the referent and get back the source
     pub fn unbind(mut self) -> Box<L> {
         mem::drop(self.derived.take());
         // Safety: a mutable reference to source was held by derived which was dropped just above
