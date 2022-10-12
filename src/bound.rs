@@ -27,9 +27,8 @@ use std::sync::{Arc, RwLock};
 /// assert_eq!(bound.wrapped().0, &[1, 2, 3]);
 /// ```
 /// 
-/// However you can only read the dependent this way. Writing the dependent can be unsound
-/// so it's not allowed, but if the dependent is something like a mutex guard you can write
-/// through it. To be precise, [Deref], [DerefMut], [AsRef] and [AsMut] are all forwarded if
+/// If the dependent is something like a mutex guard you can write /// through it.
+/// To be precise, [Deref], [DerefMut], [AsRef] and [AsMut] are all forwarded if
 /// the dependent implements them.
 /// 
 /// The canonical example is an [Arc]<[RwLock]>:
@@ -52,16 +51,16 @@ pub struct Bound<G, U> {
 }
 
 impl<'a, G, L: 'a> Bound<G, L> {
+    
+    // region: constructors
+    
     /// Bind data to a referrent
     pub fn new<F: FnOnce(&'a mut L) -> G>(source: L, func: F) -> Self {
         // We need to create the box to avoid strange allocators
         let source_ref = Box::leak(Box::new(source));
         let source_ptr = source_ref as *mut L;
         let derived = func(source_ref);
-        Self {
-            derived: Some(derived),
-            source_ptr
-        }
+        Self { derived: Some(derived), source_ptr }
     }
 
     /// Bind data to a referrent or a referrent error
@@ -76,7 +75,7 @@ impl<'a, G, L: 'a> Bound<G, L> {
 
     /// Bind data to an asynchronously obtained referrent
     pub async fn async_new<Fut, F>(source: L, func: F) -> Self
-    where Fut: IntoFuture<Output = G>, F: FnOnce(&'a mut L) -> Fut {
+    where F: FnOnce(&'a mut L) -> Fut, Fut: IntoFuture<Output = G> {
         let source_ref = Box::leak(Box::new(source));
         let source_ptr = source_ref as *mut L;
         let derived = func(source_ref).await;
@@ -88,23 +87,71 @@ impl<'a, G, L: 'a> Bound<G, L> {
 
     /// Bind data to an asynchronously obtained referrent or referrent error
     pub async fn async_try_new<E, Fut, F>(source: L, func: F) -> Result<Self, Bound<E, L>>
-    where Fut: IntoFuture<Output = Result<G, E>>, F: FnOnce(&'a mut L) -> Fut {
+    where F: FnOnce(&'a mut L) -> Fut, Fut: IntoFuture<Output = Result<G, E>> {
         let source_ref = Box::leak(Box::new(source));
         let source_ptr = source_ref as *mut L;
         func(source_ref).await
             .map(|res| Bound{ derived: Some(res), source_ptr })
             .map_err(|e| Bound{ derived: Some(e), source_ptr })
     }
+    
+    // endregion: constructors
+
+    // region: map
+
+    /// Replace the referrent
+    pub fn map<G2, F>(self, func: F) -> Bound<G2, L> where F: FnOnce(G) -> G2 {
+        let (derived, source_ptr) = self.decompose();
+        let new = func(derived);
+        Bound { derived: Some(new), source_ptr }
+    }
+
+    /// Replace the referrent or produce a referrent error
+    pub fn try_map<G2, E, F>(self, func: F) -> Result<Bound<G2, L>, Bound<E, L>>
+    where F: FnOnce(G) -> Result<G2, E> {
+        let (derived, source_ptr) = self.decompose();
+        func(derived)
+            .map(|new| Bound { derived: Some(new), source_ptr })
+            .map_err(|e| Bound { derived: Some(e), source_ptr })
+    }
+
+    /// Asynchronously replace the referrent
+    pub async fn async_map<G2, Fut, F>(self, func: F) -> Bound<G2, L>
+    where F: FnOnce(G) -> Fut, Fut: IntoFuture<Output = G2> {
+        let (derived, source_ptr) = self.decompose();
+        let new = func(derived).await;
+        Bound { derived: Some(new), source_ptr }
+    }
+
+    /// Asynchronously replace the referrent or produce a referrent error
+    pub async fn async_try_map<G2, E, Fut, F>(self, func: F) -> Result<Bound<G2, L>, Bound<E, L>>
+    where F: FnOnce(G) -> Fut, Fut: IntoFuture<Output = Result<G2, E>> {
+        let (derived, source_ptr) = self.decompose();
+        func(derived).await
+            .map(|new| Bound { derived: Some(new), source_ptr })
+            .map_err(|e| Bound { derived: Some(e), source_ptr })
+    }
+
+    // endregion: map
+
+    /// Take the parts out of a Box and leave it empty so Drop doesn't do anything
+    /// # Safety:
+    /// Derived still holds a mutable reference to source_ptr so casting it back to box is unsound
+    fn decompose(mut self) -> (G, *mut L) {
+        let g = self.derived.take().unwrap();
+        let source_ptr = self.source_ptr;
+        self.source_ptr = ptr::null_mut(); // Prevent Drop from deallocating source
+        (g, source_ptr)
+    }
 
     /// Drop the referent and get back the source
-    pub fn unbind(mut self) -> Box<L> {
-        mem::drop(self.derived.take());
+    pub fn unbind(self) -> Box<L> {
+        let (derived, source_ptr) = self.decompose();
+        mem::drop(derived);
         // Safety: a mutable reference to source was held by derived which was dropped just above
         // in addition, this function consumes self so it will only run once, and this is the
         // only place where source_ptr is set to null, so checking for null here is not necessary.
-        let source = unsafe { Box::from_raw(self.source_ptr) };
-        self.source_ptr = ptr::null_mut(); // Prevent Drop from deallocating source
-        source
+        unsafe { Box::from_raw(source_ptr) }
     }
 
     /// Access the wrapped struct
@@ -113,9 +160,8 @@ impl<'a, G, L: 'a> Bound<G, L> {
         unsafe { self.derived.as_ref().unwrap_unchecked() }
     }
 
-    /// Modify the wrapped struct. Making this public would be unsound because it might be
-    /// overwritten
-    fn wrapped_mut(&mut self) -> &mut G {
+    /// Modify the wrapped struct.
+    pub fn wrapped_mut(&mut self) -> &mut G {
         // Safety: this is always a Some() until Drop is called
         unsafe { self.derived.as_mut().unwrap_unchecked() }
     }
@@ -127,7 +173,7 @@ impl<'a, G, L: 'a> Bound<G, L> {
 impl<G, L> Drop for Bound<G, L> {
     fn drop(&mut self) {
         mem::drop(self.derived.take());
-        // Self::unbind might take the U out of the struct and set the pointer to null
+        // Bound::decompose might take the U out of the struct and set the pointer to null
         if !self.source_ptr.is_null() {
             // Safety: A mutable reference to source was held by derived, but derived was dropped
             // just above therefore the Box may safely be dropped.
@@ -169,7 +215,7 @@ mod tests {
     impl Drop for MockStore {
         fn drop(&mut self) {
             println!("Store {} dropped", self.0);
-            self.0 = "FAIL";
+            self.0 = "FAIL"; // Contaminate string so later assertions will fail
         }
     }
     struct MockLock<'a>(&'a MockStore);
@@ -185,7 +231,7 @@ mod tests {
 
     fn mk_store() -> MockStore { MockStore("flag") }
 
-    /// This is a compile-time error (but we can't test that)
+    // /// This is a compile-time error (but we can't test that)
     // fn mk_lock_naiive() -> MockLock<'static> { MockLock(&mk_store()) }
 
     /// Basic usage of Bound as a smart pointer
@@ -223,6 +269,21 @@ mod tests {
         println!("-- testing returning RwLockWriteGuard referencing Arc<RwLock> --");
         let mut writer = get_writer();
         *writer = 2;
+    }
+
+    /// Alternative lock for mapping test
+    struct MockLock2<'a>(&'a MockStore);
+    impl Drop for MockLock2<'_> {
+        fn drop(&mut self) { println!("Lock2 for {} dropped", self.0.0) }
+    }
+
+    #[test]
+    fn test_map() {
+        println!("-- testing mapping one type of lock into another --");
+        let first = mk_lock();
+        let second = first.map(|MockLock(store)| MockLock2(store));
+        println!("The first lock should be gcd now");
+        assert_eq!(second.wrapped().0.0, "flag");
     }
 }
 
