@@ -167,6 +167,10 @@ impl<'a, G, L: 'a> Bound<G, L> {
     }
 }
 
+// This object only exposes G, so it's safe wherever holding a G is safe.
+unsafe impl<G, L> Send for Bound<G, L> where G: Sync {}
+unsafe impl<G, L> Sync for Bound<G, L> where G: Sync {}
+
 /// Ensure that
 /// - `derived` gets dropped before `source_ptr`
 /// - `source_ptr` gets dropped

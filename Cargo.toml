@@ -10,7 +10,7 @@ categories = [
 repository = "https://github.com/lbfalvy/bound/"
 license = "MIT"
 authors = ["Lawrence Bethlenfalvy <lbfalvy@protonmail.com>"]
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 
 [dependencies]
