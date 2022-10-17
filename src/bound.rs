@@ -1,10 +1,9 @@
 use std::fmt::{Debug, Display};
-use std::future::IntoFuture;
+use std::future::{IntoFuture, Future};
 use std::hash::Hash;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
-use std::sync::{Arc, RwLock};
 
 
 /// Derive a struct from a reference and use it safely. The source is boxed,
@@ -50,91 +49,7 @@ pub struct Bound<G, U> {
     source_ptr: *mut U,
 }
 
-impl<'a, G, L: 'a> Bound<G, L> {
-    
-    // region: constructors
-    
-    /// Bind data to a referrent
-    pub fn new<F: FnOnce(&'a mut L) -> G>(source: L, func: F) -> Self {
-        // We need to create the box to avoid strange allocators
-        let source_ref = Box::leak(Box::new(source));
-        let source_ptr = source_ref as *mut L;
-        let derived = func(source_ref);
-        Self { derived: Some(derived), source_ptr }
-    }
-
-    /// Bind data to a referrent or a referrent error
-    pub fn try_new<E, F>(source: L, func: F) -> Result<Self, Bound<E, L>>
-    where F: FnOnce(&'a mut L) -> Result<G, E>{
-        let source_ref = Box::leak(Box::new(source));
-        let source_ptr = source_ref as *mut L;
-        func(source_ref)
-            .map(|res| Bound{ derived: Some(res), source_ptr })
-            .map_err(|e| Bound{ derived: Some(e), source_ptr })
-    }
-
-    /// Bind data to an asynchronously obtained referrent
-    pub async fn async_new<Fut, F>(source: L, func: F) -> Self
-    where F: FnOnce(&'a mut L) -> Fut, Fut: IntoFuture<Output = G> {
-        let source_ref = Box::leak(Box::new(source));
-        let source_ptr = source_ref as *mut L;
-        let derived = func(source_ref).await;
-        Self {
-            derived: Some(derived),
-            source_ptr
-        }
-    }
-
-    /// Bind data to an asynchronously obtained referrent or referrent error
-    pub async fn async_try_new<E, Fut, F>(source: L, func: F) -> Result<Self, Bound<E, L>>
-    where F: FnOnce(&'a mut L) -> Fut, Fut: IntoFuture<Output = Result<G, E>> {
-        let source_ref = Box::leak(Box::new(source));
-        let source_ptr = source_ref as *mut L;
-        func(source_ref).await
-            .map(|res| Bound{ derived: Some(res), source_ptr })
-            .map_err(|e| Bound{ derived: Some(e), source_ptr })
-    }
-    
-    // endregion: constructors
-
-    // region: map
-
-    /// Replace the referrent
-    pub fn map<G2, F>(self, func: F) -> Bound<G2, L> where F: FnOnce(G) -> G2 {
-        let (derived, source_ptr) = self.decompose();
-        let new = func(derived);
-        Bound { derived: Some(new), source_ptr }
-    }
-
-    /// Replace the referrent or produce a referrent error
-    pub fn try_map<G2, E, F>(self, func: F) -> Result<Bound<G2, L>, Bound<E, L>>
-    where F: FnOnce(G) -> Result<G2, E> {
-        let (derived, source_ptr) = self.decompose();
-        func(derived)
-            .map(|new| Bound { derived: Some(new), source_ptr })
-            .map_err(|e| Bound { derived: Some(e), source_ptr })
-    }
-
-    /// Asynchronously replace the referrent
-    pub async fn async_map<G2, Fut, F>(self, func: F) -> Bound<G2, L>
-    where F: FnOnce(G) -> Fut, Fut: IntoFuture<Output = G2> {
-        let (derived, source_ptr) = self.decompose();
-        let new = func(derived).await;
-        Bound { derived: Some(new), source_ptr }
-    }
-
-    /// Asynchronously replace the referrent or produce a referrent error
-    pub async fn async_try_map<G2, E, Fut, F>(self, func: F) -> Result<Bound<G2, L>, Bound<E, L>>
-    where F: FnOnce(G) -> Fut, Fut: IntoFuture<Output = Result<G2, E>> {
-        let (derived, source_ptr) = self.decompose();
-        func(derived).await
-            .map(|new| Bound { derived: Some(new), source_ptr })
-            .map_err(|e| Bound { derived: Some(e), source_ptr })
-    }
-
-    // endregion: map
-
-    /// Take the parts out of a Box and leave it empty so Drop doesn't do anything
+impl<G, L> Bound<G, L> {/// Take the parts out of a Box and leave it empty so Drop doesn't do anything
     /// # Safety:
     /// Derived still holds a mutable reference to source_ptr so casting it back to box is unsound
     fn decompose(mut self) -> (G, *mut L) {
@@ -165,10 +80,121 @@ impl<'a, G, L: 'a> Bound<G, L> {
         // Safety: this is always a Some() until Drop is called
         unsafe { self.derived.as_mut().unwrap_unchecked() }
     }
+
+}
+
+impl<G, L: 'static> Bound<G, L> {
+    
+    // region: constructors
+    
+    /// Bind data to a referrent
+    pub fn new<F: FnOnce(&'static mut L) -> G>(source: L, func: F) -> Self {
+        // We need to create the box to avoid strange allocators
+        let source_ref = Box::leak(Box::new(source));
+        let source_ptr = source_ref as *mut L;
+        let derived = func(source_ref);
+        Self { derived: Some(derived), source_ptr }
+    }
+
+    /// Bind data to a referrent or a referrent error
+    pub fn try_new<E, F>(source: L, func: F) -> Result<Self, Bound<E, L>>
+    where F: FnOnce(&'static mut L) -> Result<G, E>{
+        let source_ref = Box::leak(Box::new(source));
+        let source_ptr = source_ref as *mut L;
+        func(source_ref)
+            .map(|res| Bound{ derived: Some(res), source_ptr })
+            .map_err(|e| Bound{ derived: Some(e), source_ptr })
+    }
+
+    /// Bind data to an asynchronously obtained referrent
+    pub fn async_new<Fut: Send, F>(source: L, func: F)
+    -> impl IntoFuture<Output = Self> + Send
+    where F: FnOnce(&'static mut L) -> Fut, Fut: IntoFuture<Output = G>,
+    <Fut as IntoFuture>::IntoFuture: Send, G: Send, L: Send {
+        let source_ref = Box::leak(Box::new(source));
+        let source_ptr = source_ref as *mut L;
+        let mut instance = Self { source_ptr, derived: None };
+        let fut = func(source_ref);
+        async move {
+            let derived = fut.await;
+            instance.derived = Some(derived);
+            instance
+        }
+    }
+
+    /// Bind data to an asynchronously obtained referrent or referrent error
+    pub fn async_try_new<E: Send, Fut: Send, F: Send>(source: L, func: F)
+    -> impl Future<Output = Result<Self, Bound<E, L>>> + Send
+    where F: FnOnce(&'static mut L) -> Fut, Fut: IntoFuture<Output = Result<G, E>>,
+    <Fut as IntoFuture>::IntoFuture: Send, G: Send, L: Send {
+        let source_ref = Box::leak(Box::new(source));
+        let source_ptr = source_ref as *mut L;
+        let fut = func(source_ref);
+        let sendable_source_ptr = unsafe { source_ptr.as_mut().unwrap() };
+        async move {
+            let res = fut.await;
+            let source_ptr = sendable_source_ptr as *mut L;
+            res.map(|derived| Bound{ derived: Some(derived), source_ptr })
+                .map_err(|e| Bound{ derived: Some(e), source_ptr })
+        }
+    }
+    
+    // endregion: constructors
+
+    // region: map
+
+    /// Replace the referrent
+    pub fn map<G2, F>(self, func: F) -> Bound<G2, L> where F: FnOnce(G) -> G2 {
+        let (derived, source_ptr) = self.decompose();
+        let new = func(derived);
+        Bound { derived: Some(new), source_ptr }
+    }
+
+    /// Replace the referrent or produce a referrent error
+    pub fn try_map<G2, E, F>(self, func: F) -> Result<Bound<G2, L>, Bound<E, L>>
+    where F: FnOnce(G) -> Result<G2, E> {
+        let (derived, source_ptr) = self.decompose();
+        func(derived)
+            .map(|new| Bound { derived: Some(new), source_ptr })
+            .map_err(|e| Bound { derived: Some(e), source_ptr })
+    }
+
+    /// Asynchronously replace the referrent
+    pub fn async_map<G2: Send, Fut: Send, F>(self, func: F)
+    -> impl Future<Output = Bound<G2, L>> + Send
+    where F: FnOnce(G) -> Fut, Fut: IntoFuture<Output = G2>,
+    <Fut as IntoFuture>::IntoFuture: Send, L: Send {
+        let (derived, source_ptr) = self.decompose();
+        let fut = func(derived);
+        let mut next_instance = Bound { derived: None, source_ptr };
+        async move {
+            let new = fut.await;
+            next_instance.derived = Some(new);
+            next_instance
+        }
+    }
+
+    /// Asynchronously replace the referrent or produce a referrent error
+    pub fn async_try_map<G2: Send, E: Send, Fut: Send, F>(self, func: F)
+    -> impl Future<Output = Result<Bound<G2, L>, Bound<E, L>>> + Send
+    where F: FnOnce(G) -> Fut, Fut: IntoFuture<Output = Result<G2, E>>,
+    <Fut as IntoFuture>::IntoFuture: Send, L: Send {
+        let (derived, source_ptr) = self.decompose();
+        let fut = func(derived);
+        let sendable_source_ptr = unsafe { source_ptr.as_mut().unwrap() };
+        async move {
+            let res = fut.await;
+            let source_ptr = sendable_source_ptr as *mut L;
+            res.map(|new| Bound { derived: Some(new), source_ptr })
+                .map_err(|e| Bound { derived: Some(e), source_ptr })
+        }
+    }
+
+    // endregion: map
 }
 
 // This object only exposes G, so it's safe wherever holding a G is safe.
-unsafe impl<G, L> Send for Bound<G, L> where G: Sync {}
+unsafe impl<G, L> Send for Bound<G, L> where G: Send {}
 unsafe impl<G, L> Sync for Bound<G, L> where G: Sync {}
 
 /// Ensure that
@@ -212,6 +238,8 @@ impl<T: ?Sized, G, L> AsMut<T> for Bound<G, L> where G: DerefMut + AsMut<T> {
 mod tests {
     use std::ops::Deref;
     use std::sync::{Arc, RwLock, RwLockWriteGuard};
+
+    use async_lock::RwLock as ARwLock;
 
     use super::*;
 
@@ -288,6 +316,13 @@ mod tests {
         let second = first.map(|MockLock(store)| MockLock2(store));
         println!("The first lock should be gcd now");
         assert_eq!(second.wrapped().0.0, "flag");
+    }
+
+    /// This is a compilation test to make sure the future is always send
+    #[allow(unused)]
+    fn works_with_async_lock() -> impl Send {
+        let lock = Arc::new(ARwLock::new(1));
+        Bound::async_new(lock.clone(), |l| l.read())
     }
 }
 
