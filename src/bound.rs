@@ -108,7 +108,7 @@ impl<G, L: 'static> Bound<G, L> {
 
     /// Bind data to an asynchronously obtained referrent
     pub fn async_new<Fut: Send, F>(source: L, func: F)
-    -> impl IntoFuture<Output = Self> + Send
+    -> impl Future<Output = Self> + Send
     where F: FnOnce(&'static mut L) -> Fut, Fut: IntoFuture<Output = G>,
     <Fut as IntoFuture>::IntoFuture: Send, G: Send, L: Send {
         let source_ref = Box::leak(Box::new(source));
@@ -323,6 +323,14 @@ mod tests {
     fn works_with_async_lock() -> impl Send {
         let lock = Arc::new(ARwLock::new(1));
         Bound::async_new(lock.clone(), |l| l.read())
+    }
+
+    fn works_with_async_lock_of_async_lock() -> impl Send {
+        let lock = Arc::new(ARwLock::new(Arc::new(ARwLock::new(1))));
+        async move {
+            let inner = Bound::async_new(lock.clone(), |l| l.read()).await;
+            Bound::async_new(inner, |g| g.read())
+        }
     }
 }
 
