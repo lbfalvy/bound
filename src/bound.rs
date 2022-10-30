@@ -49,8 +49,9 @@ pub struct Bound<G, U> {
     source_ptr: *mut U,
 }
 
-impl<G, L> Bound<G, L> {/// Take the parts out of a Box and leave it empty so Drop doesn't do anything
-    /// # Safety:
+impl<G, L> Bound<G, L> {
+    /// Take the parts out of a Box and leave it empty so Drop doesn't do anything
+    /// # Safety
     /// Derived still holds a mutable reference to source_ptr so casting it back to box is unsound
     fn decompose(mut self) -> (G, *mut L) {
         let g = self.derived.take().unwrap();
@@ -76,11 +77,13 @@ impl<G, L> Bound<G, L> {/// Take the parts out of a Box and leave it empty so Dr
     }
 
     /// Modify the wrapped struct.
-    pub fn wrapped_mut(&mut self) -> &mut G {
+    /// # Safety
+    /// It's possible to swap the derived objects of two Bound objects, which is UB.
+    /// Mutation must not extend to the reference G holds to L.
+    pub unsafe fn wrapped_mut(&mut self) -> &mut G {
         // Safety: this is always a Some() until Drop is called
         unsafe { self.derived.as_mut().unwrap_unchecked() }
     }
-
 }
 
 impl<G, L: 'static> Bound<G, L> {
@@ -222,7 +225,9 @@ impl<T: ?Sized, G, U> Deref for Bound<G, U> where G: Deref<Target = T> {
 
 impl<T: ?Sized, G, U> DerefMut for Bound<G, U> where G: DerefMut<Target = T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.wrapped_mut().deref_mut()
+        // Safety: it is assumed that this reference is somehow held by L and not
+        // the other way around.
+        unsafe { self.wrapped_mut().deref_mut() }
     }
 }
 
@@ -231,7 +236,11 @@ impl<T: ?Sized, G, L> AsRef<T> for Bound<G, L> where G: AsRef<T> {
 }
 
 impl<T: ?Sized, G, L> AsMut<T> for Bound<G, L> where G: DerefMut + AsMut<T> {
-    fn as_mut(&mut self) -> &mut T { self.wrapped_mut().as_mut() }
+    fn as_mut(&mut self) -> &mut T {
+        // Safety: it is assumed that this reference is somehow held by L and not
+        // the other way around.
+        unsafe { self.wrapped_mut().as_mut() }
+    }
 }
 
 #[cfg(test)]
@@ -325,6 +334,7 @@ mod tests {
         Bound::async_new(lock.clone(), |l| l.read())
     }
 
+    #[allow(unused)]
     fn works_with_async_lock_of_async_lock() -> impl Send {
         let lock = Arc::new(ARwLock::new(Arc::new(ARwLock::new(1))));
         async move {
@@ -332,6 +342,15 @@ mod tests {
             Bound::async_new(inner, |g| g.read())
         }
     }
+
+    // /// The object returned by this function is corrupted, therefore wrapped_mut must not be public
+    // #[allow(unused)]
+    // fn swapping_must_not_compile() -> impl Send {
+    //     let mut first = mk_lock();
+    //     let mut second = mk_lock();
+    //     mem::swap(first.wrapped_mut(), second.wrapped_mut());
+    //     first
+    // }
 }
 
 // Delegate std implementations to `self.deref()`

@@ -10,8 +10,8 @@ categories = [
 repository = "https://github.com/lbfalvy/bound/"
 license = "MIT"
 authors = ["Lawrence Bethlenfalvy <lbfalvy@protonmail.com>"]
-version = "0.3.1"
+version = "0.4.1"
 edition = "2021"
 
 [dev-dependencies]
-async-lock = "2.5.0"
+async-lock = "2.6.0"
