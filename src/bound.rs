@@ -3,6 +3,7 @@ use std::future::{IntoFuture, Future};
 use std::hash::Hash;
 use std::mem;
 use std::ops::{Deref, DerefMut};
+use std::pin::Pin;
 use std::ptr;
 
 
@@ -77,12 +78,13 @@ impl<G, L> Bound<G, L> {
     }
 
     /// Modify the wrapped struct.
-    /// # Safety
-    /// It's possible to swap the derived objects of two Bound objects, which is UB.
-    /// Mutation must not extend to the reference G holds to L.
-    pub unsafe fn wrapped_mut(&mut self) -> &mut G {
-        // Safety: this is always a Some() until Drop is called
-        unsafe { self.derived.as_mut().unwrap_unchecked() }
+    pub fn wrapped_mut(&mut self) -> Pin<&mut G> {
+        unsafe {
+            // Safety: this is always a Some() until Drop is called
+            let internal_ref = self.derived.as_mut().unwrap_unchecked();
+            // Safety: that the pointee never changes is the core safety guarantee of Bound
+            Pin::new_unchecked(internal_ref)
+        }
     }
 }
 
@@ -91,7 +93,7 @@ impl<G, L: 'static> Bound<G, L> {
     // region: constructors
     
     /// Bind data to a referrent
-    pub fn new<F: FnOnce(&'static mut L) -> G>(source: L, func: F) -> Self {
+    pub fn new<'a, F: FnOnce(&'a mut L) -> G>(source: L, func: F) -> Self where G: 'a {
         // We need to create the box to avoid strange allocators
         let source_ref = Box::leak(Box::new(source));
         let source_ptr = source_ref as *mut L;
@@ -100,8 +102,8 @@ impl<G, L: 'static> Bound<G, L> {
     }
 
     /// Bind data to a referrent or a referrent error
-    pub fn try_new<E, F>(source: L, func: F) -> Result<Self, Bound<E, L>>
-    where F: FnOnce(&'static mut L) -> Result<G, E>{
+    pub fn try_new<'a, E, F>(source: L, func: F) -> Result<Self, Bound<E, L>>
+    where F: FnOnce(&'a mut L) -> Result<G, E>, G: 'a {
         let source_ref = Box::leak(Box::new(source));
         let source_ptr = source_ref as *mut L;
         func(source_ref)
@@ -110,10 +112,10 @@ impl<G, L: 'static> Bound<G, L> {
     }
 
     /// Bind data to an asynchronously obtained referrent
-    pub fn async_new<Fut: Send, F>(source: L, func: F)
+    pub fn async_new<'a, Fut: Send, F>(source: L, func: F)
     -> impl Future<Output = Self> + Send
-    where F: FnOnce(&'static mut L) -> Fut, Fut: IntoFuture<Output = G>,
-    <Fut as IntoFuture>::IntoFuture: Send, G: Send, L: Send {
+    where F: FnOnce(&'a mut L) -> Fut, Fut: IntoFuture<Output = G>,
+    <Fut as IntoFuture>::IntoFuture: Send, G: 'a + Send, L: Send {
         let source_ref = Box::leak(Box::new(source));
         let source_ptr = source_ref as *mut L;
         let mut instance = Self { source_ptr, derived: None };
@@ -126,10 +128,10 @@ impl<G, L: 'static> Bound<G, L> {
     }
 
     /// Bind data to an asynchronously obtained referrent or referrent error
-    pub fn async_try_new<E: Send, Fut: Send, F: Send>(source: L, func: F)
+    pub fn async_try_new<'a, E: Send, Fut: Send, F: Send>(source: L, func: F)
     -> impl Future<Output = Result<Self, Bound<E, L>>> + Send
-    where F: FnOnce(&'static mut L) -> Fut, Fut: IntoFuture<Output = Result<G, E>>,
-    <Fut as IntoFuture>::IntoFuture: Send, G: Send, L: Send {
+    where F: FnOnce(&'a mut L) -> Fut, Fut: IntoFuture<Output = Result<G, E>>,
+    <Fut as IntoFuture>::IntoFuture: Send, G: 'a + Send, L: Send {
         let source_ref = Box::leak(Box::new(source));
         let source_ptr = source_ref as *mut L;
         let fut = func(source_ref);
@@ -227,19 +229,19 @@ impl<T: ?Sized, G, U> DerefMut for Bound<G, U> where G: DerefMut<Target = T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // Safety: it is assumed that this reference is somehow held by L and not
         // the other way around.
-        unsafe { self.wrapped_mut().deref_mut() }
+        unsafe { self.wrapped_mut().get_unchecked_mut() }.deref_mut()
     }
 }
 
-impl<T: ?Sized, G, L> AsRef<T> for Bound<G, L> where G: AsRef<T> {
-    fn as_ref(&self) -> &T { self.wrapped().as_ref() }
+impl<T: ?Sized, G: Deref, L> AsRef<T> for Bound<G, L> where <G as Deref>::Target: AsRef<T> {
+    fn as_ref(&self) -> &T { self.deref().as_ref() }
 }
 
-impl<T: ?Sized, G, L> AsMut<T> for Bound<G, L> where G: DerefMut + AsMut<T> {
+impl<T: ?Sized, G: DerefMut, L> AsMut<T> for Bound<G, L> where <G as Deref>::Target: AsMut<T> {
     fn as_mut(&mut self) -> &mut T {
         // Safety: it is assumed that this reference is somehow held by L and not
         // the other way around.
-        unsafe { self.wrapped_mut().as_mut() }
+        unsafe { self.wrapped_mut().get_unchecked_mut() }.as_mut()
     }
 }
 
