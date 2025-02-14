@@ -5,13 +5,18 @@ Wrap lock guards and other structs along with the locks or other data they are d
 by shared reference from, in a struct you can pass around and store anywhere
 """
 categories = [
-    "asynchronous", "concurrency", "data-structures", "memory-management","rust-patterns"
+    "asynchronous",
+    "concurrency",
+    "data-structures",
+    "memory-management",
+    "rust-patterns",
 ]
 repository = "https://github.com/lbfalvy/bound/"
 license = "MIT"
 authors = ["Lawrence Bethlenfalvy <lbfalvy@protonmail.com>"]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 
 [dev-dependencies]
-async-lock = "2.6.0"
+async-lock = "3.4.0"
+test_executors = "0.3.2"

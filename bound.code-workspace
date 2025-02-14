@@ -1,0 +1,29 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"editor.rulers": [
+			100 // Important; for accessibility reasons, code cannot be wider than 100ch
+		],
+		"editor.formatOnSave": true,
+		"rust-analyzer.showUnlinkedFileNotification": false,
+		"rust-analyzer.checkOnSave": true,
+		"rust-analyzer.check.command": "clippy",
+		"rust-analyzer.rustfmt.extraArgs": [
+			"+nightly"
+		],
+	},
+	"extensions": {
+		"recommendations": [
+			"maptz.regionfolder",
+			"tamasfe.even-better-toml",
+			"yzhang.markdown-all-in-one",
+			"vadimcn.vscode-lldb",
+			"rust-lang.rust-analyzer",
+			"fill-labs.dependi"
+		]
+	},
+}
